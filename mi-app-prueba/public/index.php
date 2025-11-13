@@ -1,45 +1,87 @@
 <?php
 // --- DECLARACIONES GLOBALES OBLIGATORIAS ---
-// 1. Cargar el autoloader de Composer. DEBE ESTAR AL PRINCIPIO.
 require __DIR__ . '/../vendor/autoload.php';
 
-// 2. Importar TODAS las clases que se usarán en este archivo. DEBEN ESTAR AL PRINCIPIO, en el ámbito global.
+// Importamos TODAS las clases que vamos a necesitar para el CRUD completo
+use App\Application\CreateUserUseCase;
+use App\Application\DeleteUserUseCase;
 use App\Application\FindAllUsersUseCase;
+use App\Application\UpdateUserUseCase;
 use App\Infrastructure\SqlServerUserRepository;
+use App\Domain\User;
 // --- FIN DE LAS DECLARACIONES GLOBALES ---
 
-
-// --- Lógica de Router y API (AHORA SÍ, EL CÓDIGO QUE SE EJECUTA) ---
+// --- Lógica de Router y API ---
 $requestUri = $_SERVER['REQUEST_URI'];
+$method = $_SERVER['REQUEST_METHOD'];
 
-// Si la petición es EXACTAMENTE para nuestro endpoint de API...
-if ($requestUri === '/api/users.php') {
-
-    // Establecer las cabeceras para que el navegador sepa que es un JSON
+// Verificamos si la petición es para nuestra API
+if (strpos($requestUri, '/api/users.php') === 0) {
+    
+    // Establecer cabeceras comunes
     header("Content-Type: application/json");
     
+    // Inyección de Dependencias Simple
+    $repository = new SqlServerUserRepository();
+    
     try {
-        // La lógica para obtener los usuarios ya puede usar las clases importadas arriba
-        $repository = new SqlServerUserRepository();
-        $findAllUsersUseCase = new FindAllUsersUseCase($repository);
-        $users = $findAllUsersUseCase->execute();
-        
-        // Imprimir los usuarios como un string JSON
-        echo json_encode($users);
+        switch ($method) {
+            case 'GET':
+                $findAllUsersUseCase = new FindAllUsersUseCase($repository);
+                $users = $findAllUsersUseCase->execute();
+                echo json_encode($users);
+                break;
+
+            case 'POST':
+                $data = json_decode(file_get_contents('php://input'), true);
+                if (empty($data['name']) || empty($data['email'])) {
+                    throw new InvalidArgumentException("Nombre y email son requeridos.");
+                }
+                $createUserUseCase = new CreateUserUseCase($repository);
+                $newUser = $createUserUseCase->execute($data['name'], $data['email']);
+                http_response_code(201); // 201 Created
+                echo json_encode($newUser);
+                break;
+
+            case 'PUT':
+                $data = json_decode(file_get_contents('php://input'), true);
+                if (empty($data['id']) || empty($data['name']) || empty($data['email'])) {
+                    throw new InvalidArgumentException("ID, nombre y email son requeridos para actualizar.");
+                }
+                $updateUserUseCase = new UpdateUserUseCase($repository);
+                $updatedUser = $updateUserUseCase->execute((int)$data['id'], $data['name'], $data['email']);
+                echo json_encode($updatedUser);
+                break;
+
+            case 'DELETE':
+                // Extraemos el ID de los parámetros de la URL (?id=X)
+                parse_str($_SERVER['QUERY_STRING'], $queryParams);
+                $id = (int)($queryParams['id'] ?? 0);
+                if ($id <= 0) {
+                    throw new InvalidArgumentException("ID de usuario no válido.");
+                }
+                $deleteUserUseCase = new DeleteUserUseCase($repository);
+                $deleteUserUseCase->execute($id);
+                echo json_encode(['success' => true]);
+                break;
+            
+            default:
+                http_response_code(405); // Method Not Allowed
+                echo json_encode(['error' => 'Método no permitido']);
+                break;
+        }
 
     } catch (Exception $e) {
-        // En caso de error, enviar una respuesta de error en JSON
-        http_response_code(500);
+        http_response_code(500); // Internal Server Error
         echo json_encode(['error' => 'Ocurrió un error en el servidor: ' . $e->getMessage()]);
     }
     
-    // Detener el script aquí para no enviar el HTML de abajo.
-    exit; 
+    // Detener el script aquí para no enviar el HTML.
+    exit;
 }
 // --- Fin de la Lógica de Router y API ---
 
-
-// Si la petición NO FUE para la API, el script continúa y muestra la página HTML normal.
+// Si no fue una petición a la API, se muestra el HTML
 ?>
 
 <!DOCTYPE html>
